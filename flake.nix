@@ -56,72 +56,23 @@
           includeSources = false;
         };
 
-      # Re-layout the Nix-managed Android SDK into the canonical
-      # `$ANDROID_HOME/{platforms,build-tools,platform-tools,ndk/<version>}`
-      # layout that the Android Gradle Plugin expects.
+      # The Nix-managed Android SDK is at
+      # `${raw.androidsdk}/libexec/android-sdk/`, which puts the platforms,
+      # build-tools, platform-tools, and NDK in sub-paths that don't match
+      # the Android Gradle Plugin's expectations. AGP searches
+      # `$ANDROID_HOME/ndk/<version>/source.properties` directly.
       #
-      # `pkgs.androidenv.composeAndroidPackages` puts the SDK at
-      # `$out/libexec/android-sdk/...` (Nix-FHS style), but AGP searches
-      # `$ANDROID_HOME/ndk/<version>/source.properties` directly. Without
-      # this re-layout, gradle downloads a side-by-side copy of the NDK
-      # into the writable SDK directory, wasting ~800 MB and triggering a
-      # license re-accept that crashes the build with 'some licences have
-      # not been accepted'. The wrapper derivation symlinks everything
-      # into the layout gradle wants.
+      # We point `ANDROID_SDK_ROOT` at the inner `android-sdk/` directory
+      # and patch the NDK layout at runtime in the shellHook (see below).
+      # We do NOT wrap it in a `runCommand` derivation because the NDK
+      # multi-output derivations compose badly as nativeBuildInputs of a
+      # `mkShell` derivation ("cannot coerce a list to a string").
       #
-      # Uses `stdenvNoCC.mkDerivation` with `propagatedBuildInputs = []`
-      # so the NDK multi-output derivations don't leak into the devShell's
-      # nativeBuildInputs (Nix complains: "cannot coerce a list to a
-      # string" when it tries to compose multi-output derivations there).
-      androidSdkFor =
-        pkgs:
-        let
-          raw = rawAndroidSdkFor pkgs;
-          ndkVersions = [ "27.1.12297006" "27.0.12077973" ];
-        in
-        pkgs.stdenvNoCC.mkDerivation {
-          pname = "android-sdk-gradle-layout";
-          version = raw.androidsdk.version or "0";
-          dontUnpack = true;
-          dontConfigure = true;
-          dontBuild = true;
-          dontStrip = true;
-          dontPatchELF = true;
-          nativeBuildInputs = [ ];
-          propagatedBuildInputs = [ ];
-          buildInputs = [ ];
-          __noChroot = false;
-          __noScanDrv = true;
-          inherit ndkVersions;
-          meta = {
-            description = "Android SDK re-laid out for the Android Gradle Plugin";
-            platforms = raw.androidsdk.meta.platforms or [ ];
-          };
-          installPhase = ''
-            mkdir -p "$out"
-            for entry in ${raw.androidsdk}/libexec/android-sdk/*; do
-              if [ "$(basename "$entry")" = ndk ]; then continue; fi
-              ln -s "$entry" "$out/$(basename "$entry")"
-            done
-            mkdir -p "$out/ndk"
-            for ndk in ${raw.ndk-bundles}; do
-              version="$(basename "$ndk" | sed 's/^android-sdk-ndk-//')"
-              ln -s "$ndk/libexec/android-sdk/ndk/$version" "$out/ndk/$version"
-              test -f "$out/ndk/$version/source.properties" || {
-                echo "ERROR: NDK $version missing source.properties" >&2
-                exit 1
-              }
-            done
-            test -d "$out/platforms/android-35" || {
-              echo "ERROR: platforms/android-35 missing" >&2
-              exit 1
-            }
-            test -d "$out/build-tools/35.0.0" || {
-              echo "ERROR: build-tools/35.0.0 missing" >&2
-              exit 1
-            }
-          '';
-        };
+      # Returns the inner `android-sdk/` path that AGP can consume
+      # directly, plus a `ndkVersions` list for the shellHook.
+      androidSdkDirFor =
+        pkgs: rawAndroidSdkFor pkgs;
+      ndkVersionList = [ "27.1.12297006" "27.0.12077973" ];
 
       # Host libraries needed by the JDK / gradle / native node modules
       # inside the sandboxed devShell. Without these, gradle and
@@ -204,19 +155,19 @@
               ]
               ++ pkgs.lib.optionals isLinux (
                 let
-                  raw = rawAndroidSdkFor pkgs;
+                  raw = androidSdkDirFor pkgs;
                 in
                 [
-                  (androidSdkFor pkgs)
+                  raw.androidsdk
                   raw.platform-tools
                   pkgs.android-tools
                 ]
-                # NDK derivations are not pulled into `packages` because
-                # each is a multi-output derivation that doesn't compose
-                # cleanly as a nativeBuildInputs entry. They're already
-                # exposed at $ANDROID_HOME/ndk/<version>/ via the
-                # `android-sdk-gradle-layout` wrapper above, which is
-                # enough for AGP's NDK auto-resolution.
+                # NDK derivations are intentionally NOT in `packages` —
+                # they're multi-output and don't compose cleanly as
+                # nativeBuildInputs of a mkShell derivation. The
+                # shellHook below re-lays them out under
+                # `$ANDROID_HOME/ndk/<version>/` at runtime, which is
+                # exactly the path AGP searches.
               )
               ++ hostLibsFor pkgs
               ++ pkgs.lib.optionals isDarwin [
@@ -225,15 +176,32 @@
 
             # Android SDK + JDK wiring. Compose path explicitly so gradle's
             # ANDROID_SDK_ROOT autodetection works in `expo prebuild`.
+            #
+            # Two AGP layout mismatches to fix at runtime:
+            #   1. ANDROID_HOME points into `$out/libexec/android-sdk/`
+            #      (Nix-FHS style); AGP searches `$ANDROID_HOME/<dir>`
+            #      directly, so we use the inner `android-sdk/` path.
+            #   2. NDK is missing from the inner layout; lay it out as
+            #      `$ANDROID_HOME/ndk/<version>/source.properties`.
             shellHook = pkgs.lib.optionalString isLinux ''
-              export ANDROID_SDK_ROOT="${androidSdkFor pkgs}"
+              export ANDROID_SDK_ROOT="${(androidSdkDirFor pkgs).androidsdk}/libexec/android-sdk"
               export ANDROID_HOME="$ANDROID_SDK_ROOT"
-              export PATH="$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/build-tools/35.0.0:$PATH"
+              # Lay out every requested NDK at the path AGP expects.
+              if [ ! -e "$ANDROID_HOME/ndk" ]; then
+                mkdir -p "$ANDROID_HOME/ndk"
+              fi
+              for version in ${pkgs.lib.concatStringsSep " " ndkVersionList}; do
+                ndk_store="$(find /nix/store -maxdepth 1 -name "android-sdk-ndk-$version" -type d 2>/dev/null | head -1)"
+                if [ -n "$ndk_store" ] && [ ! -e "$ANDROID_HOME/ndk/$version" ]; then
+                  ln -s "$ndk_store/libexec/android-sdk/ndk/$version" "$ANDROID_HOME/ndk/$version"
+                fi
+              done
+              export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/build-tools/35.0.0:$PATH"
               export JAVA_HOME="${pkgs.jdk21}/lib/openjdk"
               export JDK_HOME="$JAVA_HOME"
               export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath (hostLibsFor pkgs)}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
               echo "[paseo-flake] Android SDK: $ANDROID_SDK_ROOT"
-              echo "[paseo-flake] NDK: \$(ls -d $ANDROID_SDK_ROOT/ndk/* 2>/dev/null | head -1)"
+              echo "[paseo-flake] NDK versions: $(ls -d $ANDROID_HOME/ndk/* 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ')"
               echo "[paseo-flake] JDK: $JAVA_HOME"
             '' + pkgs.lib.optionalString isDarwin ''
               export JAVA_HOME="${pkgs.jdk21}/Contents/Home"
