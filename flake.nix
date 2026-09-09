@@ -31,7 +31,10 @@
       #   compileSdkVersion = 35
       #   targetSdkVersion  = 35
       #   buildToolsVersion = 35.0.0
-      #   ndkVersion        = 27.0.12077973 (per packages/app/.tool-versions)
+      #   ndkVersion        = 27.1.12297006 (hardcoded default in
+      #                       expo-modules-autolinking ExpoRootProjectPlugin,
+      #                       see node_modules/expo-modules-autolinking/
+      #                       android/expo-gradle-plugin/.../ExpoRootProjectPlugin.kt)
       # Compose once per system, reuse across outputs to avoid duplicate FOD work.
       androidSdkFor =
         pkgs:
@@ -40,7 +43,7 @@
           platformVersions = [ "35" ];
           buildToolsVersions = [ "35.0.0" ];
           includeNDK = true;
-          ndkVersion = "27.0.12077973";
+          ndkVersion = "27.1.12297006";
           includeEmulator = false;
           includeSystemImages = false;
           includeSources = false;
