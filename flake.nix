@@ -27,16 +27,22 @@
         };
       };
 
-      # Android SDK FOD — Expo SDK 54 requirements:
+      # Android SDK FOD — Expo SDK 54 + react-native-unistyles 3.x:
       #   compileSdkVersion = 35
       #   targetSdkVersion  = 35
       #   buildToolsVersion = 35.0.0
-      #   ndkVersion        = 27.1.12297006 (hardcoded default in
-      #                       expo-modules-autolinking ExpoRootProjectPlugin,
-      #                       see node_modules/expo-modules-autolinking/
-      #                       android/expo-gradle-plugin/.../ExpoRootProjectPlugin.kt)
+      #   ndkVersion (Expo autolinking) = 27.1.12297006
+      #   ndkVersion (react-native-unistyles fallback) = 27.0.12077973
       #
-      # Compose once per system, reuse across outputs to avoid duplicate FOD work.
+      # Expo SDK 54 hardcodes 27.1.12297006 in
+      # `expo-modules-autolinking/android/expo-gradle-plugin/.../ExpoRootProjectPlugin.kt`.
+      # But at least one transitive dep (`react-native-unistyles` 3.x as
+      # pinned by Paseo) still requests 27.0.12077973 from the Android
+      # Gradle Plugin, which then tries to *install* it into ANDROID_HOME
+      # — and fails because the Nix store is read-only.
+      #
+      # Workaround: include both NDKs in the SDK FOD. AGP picks the
+      # version each module asks for and never tries to install.
       rawAndroidSdkFor =
         pkgs:
         pkgs.androidenv.composeAndroidPackages {
@@ -44,7 +50,7 @@
           platformVersions = [ "35" ];
           buildToolsVersions = [ "35.0.0" ];
           includeNDK = true;
-          ndkVersion = "27.1.12297006";
+          ndkVersions = [ "27.1.12297006" "27.0.12077973" ];
           includeEmulator = false;
           includeSystemImages = false;
           includeSources = false;
@@ -58,19 +64,19 @@
       # `$out/libexec/android-sdk/...` (Nix-FHS style), but AGP searches
       # `$ANDROID_HOME/ndk/<version>/source.properties` directly. Without
       # this re-layout, gradle downloads a side-by-side copy of the NDK
-      # into `$ANDROID_HOME/ndk/`, wasting ~800 MB and requiring a fresh
-      # license accept. The wrapper derivation symlinks everything into the
-      # layout gradle wants.
+      # into the writable SDK directory, wasting ~800 MB and triggering a
+      # license re-accept that crashes the build with 'some licences have
+      # not been accepted'. The wrapper derivation symlinks everything
+      # into the layout gradle wants.
       androidSdkFor =
         pkgs:
         let
           raw = rawAndroidSdkFor pkgs;
-          ndkVersion = "27.1.12297006";
-          ndkSrc = "${(builtins.head raw.ndk-bundles)}/libexec/android-sdk/ndk/${ndkVersion}";
+          ndkVersions = [ "27.1.12297006" "27.0.12077973" ];
         in
         pkgs.runCommand "android-sdk-gradle-layout"
           {
-            inherit ndkVersion;
+            inherit ndkVersions;
             meta = {
               description = "Android SDK re-laid out for the Android Gradle Plugin";
               platforms = raw.androidsdk.meta.platforms or [ ];
@@ -84,14 +90,16 @@
               if [ "$(basename "$entry")" = ndk ]; then continue; fi
               ln -s "$entry" "$out/$(basename "$entry")"
             done
-            # Lay out the NDK at the exact path AGP expects.
+            # Lay out every requested NDK at the exact path AGP expects.
             mkdir -p "$out/ndk"
-            ln -s "${ndkSrc}" "$out/ndk/${ndkVersion}"
-            # Verify the layout so misconfigurations fail loudly at build time.
-            test -f "$out/ndk/${ndkVersion}/source.properties" || {
-              echo "ERROR: NDK source.properties missing at $out/ndk/${ndkVersion}/source.properties" >&2
-              exit 1
-            }
+            for ndk in ${raw.ndk-bundles}; do
+              version="$(basename "$ndk" | sed 's/^android-sdk-ndk-//')"
+              ln -s "$ndk/libexec/android-sdk/ndk/$version" "$out/ndk/$version"
+              test -f "$out/ndk/$version/source.properties" || {
+                echo "ERROR: NDK $version missing source.properties" >&2
+                exit 1
+              }
+            done
             test -d "$out/platforms/android-35" || {
               echo "ERROR: platforms/android-35 missing" >&2
               exit 1
