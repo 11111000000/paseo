@@ -47,8 +47,11 @@
         pkgs:
         pkgs.androidenv.composeAndroidPackages {
           abiVersions = [ "arm64-v8a" "x86_64" ];
-          platformVersions = [ "35" ];
-          buildToolsVersions = [ "35.0.0" ];
+          # AGP in react-native 0.81 + Paseo dependencies now request
+          # compileSdk 36. Lay down both 35 (Expo default) and 36 so
+          # either is satisfied without re-installing.
+          platformVersions = [ "35" "36" ];
+          buildToolsVersions = [ "35.0.0" "36.0.0" ];
           includeNDK = true;
           ndkVersions = [ "27.1.12297006" "27.0.12077973" ];
           includeEmulator = false;
