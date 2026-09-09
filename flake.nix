@@ -202,6 +202,10 @@
               export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/build-tools/35.0.0:$PATH"
               export JAVA_HOME="${pkgs.jdk21}/lib/openjdk"
               export JDK_HOME="$JAVA_HOME"
+              # Cap Gradle daemon JVM heap so it doesn't OOM under our 7.8 GB
+              # host (the daemon's defaults want 512 MB – 4 GB and we already
+              # give Expo's kotlinc 4 GB).
+              export GRADLE_OPTS="-Xmx2g -Dfile.encoding=UTF-8 -XX:+UseG1GC"
               export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath (hostLibsFor pkgs)}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
               echo "[paseo-flake] Android SDK: $ANDROID_SDK_ROOT"
               echo "[paseo-flake] NDK versions: $(ls -d $ANDROID_HOME/ndk/* 2>/dev/null | xargs -n1 basename 2>/dev/null | tr '\n' ' ')"
