@@ -68,29 +68,41 @@
       # license re-accept that crashes the build with 'some licences have
       # not been accepted'. The wrapper derivation symlinks everything
       # into the layout gradle wants.
+      #
+      # Uses `stdenvNoCC.mkDerivation` with `propagatedBuildInputs = []`
+      # so the NDK multi-output derivations don't leak into the devShell's
+      # nativeBuildInputs (Nix complains: "cannot coerce a list to a
+      # string" when it tries to compose multi-output derivations there).
       androidSdkFor =
         pkgs:
         let
           raw = rawAndroidSdkFor pkgs;
           ndkVersions = [ "27.1.12297006" "27.0.12077973" ];
         in
-        pkgs.runCommand "android-sdk-gradle-layout"
-          {
-            inherit ndkVersions;
-            meta = {
-              description = "Android SDK re-laid out for the Android Gradle Plugin";
-              platforms = raw.androidsdk.meta.platforms or [ ];
-            };
-          }
-          ''
+        pkgs.stdenvNoCC.mkDerivation {
+          pname = "android-sdk-gradle-layout";
+          version = raw.androidsdk.version or "0";
+          dontUnpack = true;
+          dontConfigure = true;
+          dontBuild = true;
+          dontStrip = true;
+          dontPatchELF = true;
+          nativeBuildInputs = [ ];
+          propagatedBuildInputs = [ ];
+          buildInputs = [ ];
+          __noChroot = false;
+          __noScanDrv = true;
+          inherit ndkVersions;
+          meta = {
+            description = "Android SDK re-laid out for the Android Gradle Plugin";
+            platforms = raw.androidsdk.meta.platforms or [ ];
+          };
+          installPhase = ''
             mkdir -p "$out"
-            # Link the platforms, build-tools, platform-tools, cmdline-tools,
-            # licenses etc. that AGP looks up via $ANDROID_HOME/...
             for entry in ${raw.androidsdk}/libexec/android-sdk/*; do
               if [ "$(basename "$entry")" = ndk ]; then continue; fi
               ln -s "$entry" "$out/$(basename "$entry")"
             done
-            # Lay out every requested NDK at the exact path AGP expects.
             mkdir -p "$out/ndk"
             for ndk in ${raw.ndk-bundles}; do
               version="$(basename "$ndk" | sed 's/^android-sdk-ndk-//')"
@@ -109,6 +121,7 @@
               exit 1
             }
           '';
+        };
 
       # Host libraries needed by the JDK / gradle / native node modules
       # inside the sandboxed devShell. Without these, gradle and
