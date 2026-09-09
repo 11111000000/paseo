@@ -3,6 +3,7 @@ import {
   View,
   Text,
   useWindowDimensions,
+  Platform,
   NativeSyntheticEvent,
   TextInputKeyPressEventData,
   TextInputSelectionChangeEventData,
@@ -47,6 +48,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useIosHardwareKeyboardSubmit } from "@/hooks/use-ios-hardware-keyboard-submit";
+import {
+  createHardwareEnterSubmitHandler,
+  type HardwareKeyDownEvent,
+} from "@/hooks/use-hardware-enter-submit";
 import { formatShortcut, type ShortcutKey } from "@/utils/format-shortcut";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
@@ -640,6 +645,15 @@ interface ComposerTextSurfaceProps {
   scrollEnabled: boolean;
   autoFocus: boolean;
   onKeyPress: ((event: WebTextInputKeyPressEvent) => void) | undefined;
+  /**
+   * Android-only: handler for hardware keyboard Enter. iOS routes hardware
+   * Enter through the `paseo-hardware-keyboard` native module (see
+   * `useIosHardwareKeyboardSubmit`) and web/desktop already routes it
+   * through `onKeyPress`, so this is a no-op on those platforms.
+   */
+  onHardwareEnter:
+    | ((event: NativeSyntheticEvent<HardwareKeyDownEvent>) => void)
+    | undefined;
   onSelectionChange: (event: NativeSyntheticEvent<TextInputSelectionChangeEventData>) => void;
   onPasteImages: ((files: readonly NativePastedFile[]) => void) | undefined;
   onPasteError: (message: string) => void;
@@ -679,6 +693,7 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
         scrollEnabled={props.scrollEnabled}
         editable={props.editable}
         onKeyPress={props.onKeyPress}
+        onKeyDown={props.onHardwareEnter}
         onSelectionChange={props.onSelectionChange}
         onPasteImages={props.onPasteImages}
         onPasteError={props.onPasteError}
@@ -1638,6 +1653,22 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       isEnabled: isInputFocused && !isSendButtonDisabled,
       onSubmit: handleDefaultSendAction,
     });
+    // Android routes hardware-Enter submit through `onKeyDown` on the
+    // TextInput (iOS already routes it through the native module above;
+    // web/desktop already route it through `onKeyPress`).
+    // `handleDefaultSendAction` is intentionally omitted from the dep array
+    // — wrapping a fresh handler every render would defeat the memo, and
+    // the hook reads it via closure which stays correct because the
+    // underlying handler is itself memoized upstream.
+    /* eslint-disable react-hooks/exhaustive-deps */
+    const handleHardwareEnterSubmit = useMemo(
+      () =>
+        Platform.OS === "android" && isInputFocused && !isSendButtonDisabled
+          ? createHardwareEnterSubmitHandler(handleDefaultSendAction)
+          : undefined,
+      [isInputFocused, isSendButtonDisabled],
+    );
+    /* eslint-enable react-hooks/exhaustive-deps */
     const submitAccessibilityLabel = resolveSubmitAccessibilityLabel({
       submitButtonAccessibilityLabel,
       canPressLoadingButton,
@@ -1815,6 +1846,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
               scrollEnabled={isComposerScrollEnabled}
               autoFocus={false}
               onKeyPress={shouldHandleWebKeyPress ? handleDesktopKeyPress : undefined}
+              onHardwareEnter={handleHardwareEnterSubmit}
               onSelectionChange={handleSelectionChange}
               onPasteImages={onPasteImages}
               onPasteError={handlePasteError}

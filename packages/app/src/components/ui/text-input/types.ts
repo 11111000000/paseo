@@ -1,4 +1,4 @@
-import type { TextInputProps } from "react-native";
+import type { NativeSyntheticEvent, TextInputProps } from "react-native";
 import type { NativePastedFile } from "@/composer/native-pasted-image";
 
 export interface EditingTextInputHandle {
@@ -12,13 +12,31 @@ export interface EditingTextInputHandle {
   getNativeRef(): unknown;
 }
 
-export interface EditingTextInputProps extends Omit<
-  TextInputProps,
-  "defaultValue" | "onChangeText" | "value"
-> {
+interface HardwareKeyDownEventData {
+  key: string;
+  keyCode?: number;
+  isComposing?: boolean;
+  shiftKey?: boolean;
+  ctrlKey?: boolean;
+  altKey?: boolean;
+  metaKey?: boolean;
+}
+
+export interface EditingTextInputProps
+  extends Omit<TextInputProps, "defaultValue" | "onChangeText" | "value"> {
   initialValue?: string;
   onChangeText?: (text: string) => void;
   onPasteImages?: (files: readonly NativePastedFile[]) => void;
   onPasteError?: (message: string) => void;
   variant?: "default" | "bottom-sheet";
+  /**
+   * Android-only: fired for hardware keyboard key-down events (including
+   * Enter from an external Bluetooth / USB keyboard). iOS ignores it;
+   * web/desktop fall through to `onKeyPress`.
+   *
+   * Not part of React Native's `TextInputProps` typing until RN ships
+   * public types for it (tracked upstream); declared here so consumers can
+   * pass it through with type safety.
+   */
+  onKeyDown?: (event: NativeSyntheticEvent<HardwareKeyDownEventData>) => void;
 }
