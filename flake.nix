@@ -198,7 +198,12 @@
                   raw.platform-tools
                   pkgs.android-tools
                 ]
-                ++ raw.ndk-bundles
+                # NDK derivations are not pulled into `packages` because
+                # each is a multi-output derivation that doesn't compose
+                # cleanly as a nativeBuildInputs entry. They're already
+                # exposed at $ANDROID_HOME/ndk/<version>/ via the
+                # `android-sdk-gradle-layout` wrapper above, which is
+                # enough for AGP's NDK auto-resolution.
               )
               ++ hostLibsFor pkgs
               ++ pkgs.lib.optionals isDarwin [
