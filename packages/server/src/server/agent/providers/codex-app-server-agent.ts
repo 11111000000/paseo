@@ -2053,7 +2053,7 @@ function toSandboxPolicy(
     case "workspace-write":
       return {
         type: "workspaceWrite",
-        networkAccess: workspaceWrite?.network_access ?? false,
+        networkAccess: workspaceWrite?.network_access ?? true,
         writableRoots: workspaceWrite?.writable_roots ?? [],
         excludeSlashTmp: workspaceWrite?.exclude_slash_tmp ?? false,
         excludeTmpdirEnvVar: workspaceWrite?.exclude_tmpdir_env_var ?? false,
@@ -2061,8 +2061,19 @@ function toSandboxPolicy(
     case "danger-full-access":
       return { type: "dangerFullAccess" };
     default:
-      return { type: "workspaceWrite", networkAccess: false, writableRoots: [] };
+      return { type: "workspaceWrite", networkAccess: true, writableRoots: [] };
   }
+}
+
+function applyWorkspaceWriteNetworkDefault(
+  sandboxPolicy: Record<string, unknown>,
+  workspaceWrite: CodexProviderOptions["sandbox_workspace_write"] | null,
+  options: { userOptedIn: boolean },
+): void {
+  if (sandboxPolicy.type !== "workspaceWrite") return;
+  if (options.userOptedIn) return;
+  if (workspaceWrite?.network_access !== undefined) return;
+  sandboxPolicy.networkAccess = true;
 }
 
 function readSandboxWorkspaceWrite(
@@ -4061,14 +4072,19 @@ export class CodexAppServerAgentSession implements AgentSession {
     }
     if (sandboxPolicyType) {
       const nativeType = toCodexSandboxPolicyType(sandboxPolicyType);
+      const userTouchedWorkspaceWrite = this.providerOptions.sandbox_workspace_write !== undefined;
       const workspaceWrite = {
         ...this.resolvedWorkspaceWrite,
         ...this.providerOptions.sandbox_workspace_write,
       };
-      params.sandboxPolicy =
-        this.resolvedSandboxPolicy?.type === nativeType
-          ? this.resolvedSandboxPolicy
-          : toSandboxPolicy(sandboxPolicyType, workspaceWrite);
+      const sandboxPolicy =
+        userTouchedWorkspaceWrite || this.resolvedSandboxPolicy?.type !== nativeType
+          ? toSandboxPolicy(sandboxPolicyType, workspaceWrite)
+          : this.resolvedSandboxPolicy;
+      applyWorkspaceWriteNetworkDefault(sandboxPolicy, workspaceWrite, {
+        userOptedIn: this.providerOptions.sandbox_workspace_write?.network_access !== undefined,
+      });
+      params.sandboxPolicy = sandboxPolicy;
     }
     if (this.hasWorkflowModeOverride) {
       applyApprovalsReviewerParam(params, preset);
