@@ -916,6 +916,88 @@ describe("Codex app-server provider", () => {
     }
   });
 
+  test("defaults workspace-write network access on for the auto mode", async () => {
+    const session = createSession({ modeId: "auto" });
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/loaded/list") return { data: ["test-thread"] };
+      if (method === "turn/start") return {};
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({ request });
+
+    await session.startTurn("git fetch");
+
+    const turnStart = request.mock.calls.find(([method]) => method === "turn/start")?.[1];
+    expect(turnStart).toMatchObject({
+      sandboxPolicy: {
+        type: "workspaceWrite",
+        networkAccess: true,
+        writableRoots: [],
+      },
+    });
+  });
+
+  test("honors an explicit network_access false override in auto mode", async () => {
+    const session = createSession({
+      modeId: "auto",
+      providerOptions: {
+        sandbox_workspace_write: { network_access: false },
+      },
+    });
+    const request = vi.fn(async (method: string) => {
+      if (method === "thread/loaded/list") return { data: ["test-thread"] };
+      if (method === "turn/start") return {};
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({ request });
+
+    await session.startTurn("isolated run");
+
+    const turnStart = request.mock.calls.find(([method]) => method === "turn/start")?.[1];
+    expect(turnStart).toMatchObject({
+      sandboxPolicy: {
+        type: "workspaceWrite",
+        networkAccess: false,
+      },
+    });
+  });
+
+  test("overrides Codex-resolved network_access false via explicit provider option", async () => {
+    const appServer = createFakeCodexAppServer({
+      "config/read": () => ({
+        config: { sandbox_workspace_write: { network_access: false } },
+      }),
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({
+        modeId: "auto",
+        providerOptions: {
+          sandbox_workspace_write: { network_access: true },
+        },
+      }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    try {
+      await session.connect();
+      await session.startTurn("git pull");
+
+      await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
+        sandboxPolicy: {
+          type: "workspaceWrite",
+          networkAccess: true,
+        },
+      });
+      appServer.assertNoErrors();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("preapproves only granted tools on the injected Codex MCP server", async () => {
     const session = createSession({
       modeId: undefined,
