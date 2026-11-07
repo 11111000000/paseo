@@ -387,6 +387,18 @@ shared chrome, pending state, error reporting, and placement. The component owns
 the callback is client code by construction. Removing the pill, reloading the plugin, disconnecting
 the host, or unloading the app tears down the contribution.
 
+## Play audio on the client
+
+`client.playAudio({ base64, mimeType })` plays a base64-encoded audio file and resolves when playback
+ends. The capability is optional on `PluginClientContext`: a client that cannot play audio omits it
+rather than advertising one it does not have, so plugins must feature-detect it and degrade.
+
+The payload must be a container format — WAV or MP3. Raw PCM is rejected because platform players
+expect a container, and a headerless PCM stream plays as noise.
+
+Native clients write the bytes to a cache file and hand the URI to the platform media stack, so any
+container the platform supports works. Web clients decode the payload directly.
+
 ## Contribute timeline items
 
 Timeline transformers and renderers are client contributions. The daemon's canonical rows and
