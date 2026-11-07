@@ -101,6 +101,14 @@ export interface PluginClientContext extends PluginCommandCapabilities {
     contribution: PluginTimelineRendererContribution<Schema>,
   ): PluginCleanup;
   openPanel(id: string, options: PluginClientOpenPanelOptions): void;
+  /**
+   * Play a base64-encoded audio file on this client; resolves when playback ends.
+   *
+   * Optional on purpose: clients that cannot play audio (older native builds)
+   * simply omit it, and plugins must degrade instead of crashing. The payload
+   * is a container format (WAV, MP3) — raw PCM is not accepted.
+   */
+  playAudio?(source: { base64: string; mimeType: string }): Promise<void>;
 }
 
 export type PluginClientContribution = (client: PluginClientContext) => PluginCleanup;
